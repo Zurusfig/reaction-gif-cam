@@ -1,0 +1,20 @@
+[
+  {
+    "id": "smile-nod",
+    "url": "/gifs/smile-nod.gif",
+    "tags": { "expression": "smile", "motion": "nod" },
+    "faceBox": { "x": 0.25, "y": 0.1, "w": 0.5, "h": 0.6 }
+  },
+  {
+    "id": "surprise-any",
+    "url": "/gifs/surprise.gif",
+    "tags": { "expression": "surprise", "motion": null },
+    "faceBox": { "x": 0.2, "y": 0.05, "w": 0.6, "h": 0.65 }
+  },
+  {
+    "id": "smile-shake",
+    "url": "/gifs/smile-shake.gif",
+    "tags": { "expression": "smile", "motion": "shake" },
+    "faceBox": { "x": 0.3, "y": 0.15, "w": 0.4, "h": 0.55 }
+  }
+]

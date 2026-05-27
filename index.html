@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reaction GIF Cam</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="status-bar">
+        <span id="status">Initializing…</span>
+      </div>
+
+      <div id="viewport">
+        <!-- Hidden video element; frames are read by MediaPipe -->
+        <video id="webcam" playsinline muted></video>
+        <!-- Main canvas: mirrored webcam + landmark overlay -->
+        <canvas id="main-canvas"></canvas>
+        <!-- Overlay canvas: GIF transition layer -->
+        <canvas id="overlay-canvas"></canvas>
+      </div>
+
+      <div id="debug-panel">
+        <div class="debug-row">
+          <span class="debug-label">Expression</span>
+          <span id="debug-expression" class="debug-value">—</span>
+        </div>
+        <div class="debug-row">
+          <span class="debug-label">Motion</span>
+          <span id="debug-motion" class="debug-value">—</span>
+        </div>
+        <div class="debug-row">
+          <span class="debug-label">Last trigger</span>
+          <span id="debug-trigger" class="debug-value">—</span>
+        </div>
+        <div class="debug-row">
+          <span class="debug-label">FPS</span>
+          <span id="debug-fps" class="debug-value">—</span>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
