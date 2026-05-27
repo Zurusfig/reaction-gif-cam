@@ -11,11 +11,11 @@ export async function loadGifs() {
 }
 
 // Returns a random matching GIF entry or null.
-// expression: required exact match
-// motion: null in the db entry means any motion accepted
+// null expression tag = any expression accepted (gesture-driven GIFs)
+// null motion tag = any motion accepted
 export function matchGif({ expression, motion }) {
   const matches = gifDb.filter(g => {
-    const exprMatch = g.tags.expression === expression;
+    const exprMatch = g.tags.expression === null || g.tags.expression === expression;
     const motionMatch = g.tags.motion === null || g.tags.motion === motion;
     return exprMatch && motionMatch;
   });

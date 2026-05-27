@@ -1,7 +1,7 @@
-import { initDetector, detectFrame, classifyExpression, classifyMotion, updateMotionBuffer, getTongueScore } from './detector.js';
+import { initDetector, detectFrame, classifyExpression, classifyMotion, updateMotionBuffer, getBlendshapeScores } from './detector.js';
 import { Renderer } from './renderer.js';
 import { loadGifs, matchGif } from './database.js';
-import { preloadGif, crossfadeIn, drawGifFrame, crossfadeOut } from './transition.js';
+import { preloadGif, crossfadeIn, crossfadeOut } from './transition.js';
 import './style.css';
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
@@ -11,7 +11,7 @@ const mainCanvas = document.getElementById('main-canvas');
 const overlayCanvas = document.getElementById('overlay-canvas');
 const debugExpression = document.getElementById('debug-expression');
 const debugMotion = document.getElementById('debug-motion');
-const debugHands = document.getElementById('debug-hands');
+const debugInfo = document.getElementById('debug-hands');
 const debugTrigger = document.getElementById('debug-trigger');
 const debugFps = document.getElementById('debug-fps');
 const statusEl = document.getElementById('status');
@@ -20,13 +20,13 @@ const statusEl = document.getElementById('status');
 
 const STATE = Object.freeze({
   LIVE: 'live',
-  HELD: 'held',       // waiting for 500ms stable hold
-  PLAYING: 'playing', // GIF active (fade-in, show, fade-out handled async)
+  HELD: 'held',
+  PLAYING: 'playing',
   COOLDOWN: 'cooldown',
 });
 
-const HOLD_MS = 500;
-const PLAY_MS = 3000;
+const HOLD_MS     = 500;
+const PLAY_MS     = 3000;
 const COOLDOWN_MS = 3000;
 
 const renderer = new Renderer(mainCanvas);
@@ -36,10 +36,6 @@ let heldSince = 0;
 let heldExpr = '';
 let heldMotion = '';
 let cooldownUntil = 0;
-
-// GIF playback — managed by triggerPlayback(), read by main loop
-let gifImg = null;          // loaded Image element
-let gifStartedAt = 0;       // when PLAYING state began
 
 let frameCount = 0;
 let fpsTimer = 0;
@@ -64,37 +60,35 @@ async function startWebcam() {
 // ─── Trigger + playback ───────────────────────────────────────────────────────
 
 async function triggerPlayback(expr, motion) {
-  const match = matchGif({ expression: expr, motion });
-  if (!match) {
-    // No match — silently return to LIVE
+  try {
+    const match = matchGif({ expression: expr, motion });
+    if (!match) {
+      appState = STATE.LIVE;
+      return;
+    }
+
+    debugTrigger.textContent = `${expr} + ${motion} → ${match.id}`;
+
+    const img = await preloadGif(match.url);
+    const frozen = await renderer.freezeFrame();
+
+    const gifStartedAt = performance.now();
+    await crossfadeIn(frozen, img, overlayCanvas);
+
+    const elapsed = performance.now() - gifStartedAt;
+    const remaining = Math.max(0, PLAY_MS - elapsed);
+    await new Promise(res => setTimeout(res, remaining));
+
+    await crossfadeOut(img, overlayCanvas);
+
+    appState = STATE.COOLDOWN;
+    cooldownUntil = performance.now() + COOLDOWN_MS;
+  } catch (err) {
+    console.error('GIF playback failed:', err);
+    debugTrigger.textContent = `Error: ${err.message}`;
+    // Always reset so the app doesn't get stuck in PLAYING
     appState = STATE.LIVE;
-    return;
   }
-
-  debugTrigger.textContent = `${expr} + ${motion} → ${match.id}`;
-
-  // Load GIF (fast if cached by browser)
-  const img = await preloadGif(match.url);
-  const frozen = await renderer.freezeFrame();
-
-  appState = STATE.PLAYING;
-  gifImg = img;
-  gifStartedAt = performance.now();
-
-  // Transition: frozen webcam → GIF
-  await crossfadeIn(frozen, img, overlayCanvas);
-
-  // Hold GIF for remaining play time after fade-in (fade-in counts toward PLAY_MS)
-  const elapsed = performance.now() - gifStartedAt;
-  const remaining = Math.max(0, PLAY_MS - elapsed);
-  await new Promise(res => setTimeout(res, remaining));
-
-  // Transition: GIF → transparent (live webcam shows through)
-  await crossfadeOut(img, overlayCanvas);
-
-  gifImg = null;
-  appState = STATE.COOLDOWN;
-  cooldownUntil = performance.now() + COOLDOWN_MS;
 }
 
 // ─── Main loop ────────────────────────────────────────────────────────────────
@@ -102,7 +96,6 @@ async function triggerPlayback(expr, motion) {
 function mainLoop(ts) {
   if (video.readyState < 2) { requestAnimationFrame(mainLoop); return; }
 
-  // FPS
   frameCount++;
   if (ts - fpsTimer >= 1000) {
     debugFps.textContent = frameCount;
@@ -110,7 +103,6 @@ function mainLoop(ts) {
     fpsTimer = ts;
   }
 
-  // ── COOLDOWN: just keep webcam running, no detection ──────────────────────
   if (appState === STATE.COOLDOWN) {
     renderer.drawFrame(video, null);
     if (ts >= cooldownUntil) appState = STATE.LIVE;
@@ -118,11 +110,8 @@ function mainLoop(ts) {
     return;
   }
 
-  // ── PLAYING: overlay handles the GIF; keep webcam rendering underneath ────
   if (appState === STATE.PLAYING) {
     renderer.drawFrame(video, null);
-    // drawGifFrame is called by the async transition functions via their own rAF;
-    // we don't draw here to avoid fighting with the transition's rAF ticks.
     requestAnimationFrame(mainLoop);
     return;
   }
@@ -148,8 +137,10 @@ function mainLoop(ts) {
 
   debugExpression.textContent = expression;
   debugMotion.textContent = motion;
-  const tongueScore = getTongueScore(faceBlendshapes);
-  debugHands.textContent = `tongue: ${tongueScore.toFixed(2)}  pose: ${poseLandmarks?.length ? 'yes' : 'no'}`;
+
+  // Show key raw scores in debug for tuning
+  const scores = getBlendshapeScores(faceBlendshapes);
+  debugInfo.textContent = `jaw:${scores.jawOpen ?? '—'}  smile:${scores.mouthSmileLeft ?? '—'}  brow:${scores.browOuterUpLeft ?? '—'}  lookUp:${scores.eyeLookUpLeft ?? '—'}  pose:${poseLandmarks?.length ? '✓' : '✗'}`;
 
   // ── Hold / trigger logic ──────────────────────────────────────────────────
   if (expression === 'no-face' || expression === 'neutral') {
@@ -162,14 +153,13 @@ function mainLoop(ts) {
     heldExpr = expression;
     heldMotion = motion;
   } else if (appState === STATE.HELD) {
-    // Reset hold if state changed
     if (expression !== heldExpr || motion !== heldMotion) {
       heldSince = ts;
       heldExpr = expression;
       heldMotion = motion;
     }
     if (ts - heldSince >= HOLD_MS) {
-      appState = STATE.PLAYING; // set early so loop doesn't re-trigger
+      appState = STATE.PLAYING;
       triggerPlayback(heldExpr, heldMotion);
     }
   }
@@ -183,7 +173,7 @@ async function boot() {
   statusEl.textContent = 'Requesting camera…';
   await startWebcam();
 
-  statusEl.textContent = 'Loading face model…';
+  statusEl.textContent = 'Loading models…';
   await initDetector();
   await loadGifs();
 

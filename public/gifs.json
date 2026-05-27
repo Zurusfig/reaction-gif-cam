@@ -2,19 +2,19 @@
   {
     "id": "flight-freaky",
     "url": "/gifs/flight-freaky.gif",
-    "tags": { "expression": "tongue_out", "motion": "shake" },
+    "tags": { "expression": "surprise", "motion": "shake" },
     "faceBox": { "x": 0.2, "y": 0.05, "w": 0.6, "h": 0.7 }
   },
   {
     "id": "monkey-both-hand-on-head",
     "url": "/gifs/monkey-both-hand-on-head.gif",
-    "tags": { "expression": "neutral", "motion": "hands_on_head" },
+    "tags": { "expression": null, "motion": "hands_on_head" },
     "faceBox": { "x": 0.25, "y": 0.1, "w": 0.5, "h": 0.6 }
   },
   {
     "id": "monkey-thinking",
     "url": "/gifs/monkey-thinking.gif",
-    "tags": { "expression": "neutral", "motion": "hand_on_chin" },
+    "tags": { "expression": "raised_brows", "motion": "hand_on_chin" },
     "faceBox": { "x": 0.25, "y": 0.1, "w": 0.5, "h": 0.65 }
   },
   {
