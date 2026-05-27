@@ -24,6 +24,7 @@ const EYE_CLOSED_THRESH     = 0.5;   // both eyes must exceed this
 const NOSE_TIP_IDX  = 4;
 const BROW_L_IDX    = 70;
 const CHIN_IDX      = 152;
+const TOP_HEAD_IDX  = 10;
 
 // ─── Pose landmark indices ───────────────────────────────────────────────────
 
@@ -132,7 +133,6 @@ export function classifyExpression(blendshapes) {
   if (smileL > EVIL_SMILE_THRESH && smileR > EVIL_SMILE_THRESH && lookUpScore > EVIL_LOOK_UP_THRESH) return 'evil_smile';
   if (smileL > SMILE_THRESH && smileR > SMILE_THRESH) return 'smile';
   if (frownScore > FROWN_THRESH) return 'frown';
-  if (lookUpScore > LOOKING_UP_THRESH) return 'looking_up';
   if (browRaise > BROW_RAISE_THRESH) return 'raised_brows';
   if (eyeWideScore > EYE_WIDE_THRESH) return 'eye_wide';
   return 'neutral';
@@ -213,18 +213,8 @@ function classifyGesture(poseLandmarks, faceLandmarks) {
   const leVis = le?.visibility >= POSE_VISIBILITY_THRESH;
   const reVis = re?.visibility >= POSE_VISIBILITY_THRESH;
 
-  if ((lVis && lw.y < browY) || (rVis && rw.y < browY)) return 'hands_on_head';
-
-  // Praying: both wrists visible, close together, at body/face level
-  if (lVis && rVis) {
-    const dist = Math.hypot(lw.x - rw.x, lw.y - rw.y);
-    const avgWristY = (lw.y + rw.y) / 2;
-    if (dist < PRAYING_DIST_THRESH && avgWristY > browY && avgWristY < chinY + 0.4) {
-      return 'praying';
-    }
-  }
-
-  // ABSOLUTE CINEMA: elbows at shoulder height (perpendicular), wrists raised above elbows
+  // ABSOLUTE CINEMA: elbows at shoulder height (perpendicular), wrists raised above elbows.
+  // Checked first so the cinema pose doesn't bleed into hands_on_head.
   if (lVis && rVis && leVis && reVis) {
     const lElbowAtShoulder = Math.abs(le.y - ls.y) < ELBOW_SHOULDER_Y_THRESH;
     const rElbowAtShoulder = Math.abs(re.y - rs.y) < ELBOW_SHOULDER_Y_THRESH;
@@ -232,6 +222,28 @@ function classifyGesture(poseLandmarks, faceLandmarks) {
     const rWristAboveElbow = rw.y < re.y;
     if (lElbowAtShoulder && rElbowAtShoulder && lWristAboveElbow && rWristAboveElbow) {
       return 'hands_up';
+    }
+  }
+
+  // Hands literally on top of head: wrists at/above the top-of-head landmark
+  const topHeadY = face[TOP_HEAD_IDX].y;
+  if ((lVis && lw.y < topHeadY + 0.04) || (rVis && rw.y < topHeadY + 0.04)) return 'hands_on_head';
+
+  // Praying with hands at mouth level (covering mouth) — Higuruma gesture
+  if (lVis && rVis) {
+    const dist = Math.hypot(lw.x - rw.x, lw.y - rw.y);
+    const avgWristY = (lw.y + rw.y) / 2;
+    if (dist < PRAYING_DIST_THRESH && avgWristY > noseY && avgWristY < chinY) {
+      return 'praying_mouth';
+    }
+  }
+
+  // Praying: both wrists visible, close together, at body/face level
+  if (lVis && rVis) {
+    const dist = Math.hypot(lw.x - rw.x, lw.y - rw.y);
+    const avgWristY = (lw.y + rw.y) / 2;
+    if (dist < PRAYING_DIST_THRESH && avgWristY > browY && avgWristY < chinY + 0.4) {
+      return 'praying';
     }
   }
 
@@ -244,30 +256,49 @@ function classifyGesture(poseLandmarks, faceLandmarks) {
 
 // ─── Hand gesture classifier (finger-level, using HandLandmarker) ─────────────
 
-// HandLandmarker landmark indices
-const HAND_INDEX_TIP   = 8;
-const HAND_WRIST       = 0;
+function isThumbsUp(hand) {
+  const thumbTip = hand[4], thumbIP = hand[3];
+  const indexTip = hand[8], indexPIP = hand[6];
+  const midTip   = hand[12], midPIP  = hand[10];
+  const ringTip  = hand[16], ringPIP = hand[14];
+  if (!thumbTip || !thumbIP || !indexTip || !indexPIP || !midTip || !ringTip) return false;
+  // Thumb clearly pointing up, other fingers curled below their PIP joints
+  return thumbTip.y < thumbIP.y - 0.03
+    && indexTip.y > indexPIP.y
+    && midTip.y   > midPIP.y
+    && ringTip.y  > ringPIP.y;
+}
 
 export function classifyHandGesture(handLandmarks, faceLandmarks) {
   if (!handLandmarks?.length || !faceLandmarks?.length) return 'none';
   const face = faceLandmarks[0];
   const noseY = face[NOSE_TIP_IDX].y;
   const chinY = face[CHIN_IDX].y;
-  // Face x bounds in normalized coords (un-mirrored): nose tip x ± half face width
+  const browY = face[BROW_L_IDX].y;
   const faceXCenter = face[NOSE_TIP_IDX].x;
   const faceHalfW = 0.15;
 
   for (const hand of handLandmarks) {
-    const tip  = hand[HAND_INDEX_TIP];
-    const wrist = hand[HAND_WRIST];
+    const tip   = hand[8];   // index fingertip
+    const wrist = hand[0];
+    const midTip = hand[12]; // middle fingertip
     if (!tip || !wrist) continue;
 
-    // Index finger tip near lip zone: between nose bottom and chin, within face x span
+    // Index finger tip near lip zone (relaxed bounds — no eye-roll required)
     const inFaceX = tip.x > faceXCenter - faceHalfW && tip.x < faceXCenter + faceHalfW;
-    const inLipY  = tip.y > noseY + 0.02 && tip.y < chinY - 0.02;
+    const inLipY  = tip.y > noseY && tip.y < chinY;
     if (inFaceX && inLipY) return 'index_on_lip';
 
-    // Wrist near chin (hand stroking beard): wrist between nose and chin + a bit below
+    // Thumbs up: thumb extended upward, other fingers curled
+    if (isThumbsUp(hand)) return 'thumbs_up';
+
+    // Face palm: wrist at chin level while fingers reach up past nose
+    const palmX = wrist.x > faceXCenter - faceHalfW && wrist.x < faceXCenter + faceHalfW;
+    const palmY = wrist.y > noseY && wrist.y < chinY + 0.1;
+    const fingersOverFace = midTip && midTip.y < noseY;
+    if (palmX && palmY && fingersOverFace) return 'face_palm';
+
+    // Wrist near chin (hand stroking beard)
     const wristOnChin = wrist.y > noseY && wrist.y < chinY + 0.10
       && wrist.x > faceXCenter - faceHalfW - 0.1 && wrist.x < faceXCenter + faceHalfW + 0.1;
     if (wristOnChin) return 'hand_on_chin';

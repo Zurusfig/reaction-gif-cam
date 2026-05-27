@@ -17,6 +17,13 @@ const debugTrigger    = document.getElementById('debug-trigger');
 const debugFps        = document.getElementById('debug-fps');
 const statusEl        = document.getElementById('status');
 const logEl           = document.getElementById('event-log');
+const logToggleBtn    = document.getElementById('log-toggle');
+
+logToggleBtn.addEventListener('click', () => {
+  const hidden = logEl.style.display === 'none';
+  logEl.style.display = hidden ? '' : 'none';
+  logToggleBtn.classList.toggle('log-hidden', !hidden);
+});
 
 // ─── On-screen logger (so we can debug without the console) ───────────────────
 
