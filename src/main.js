@@ -1,37 +1,46 @@
 import { initDetector, detectFrame, classifyExpression, classifyMotion, updateMotionBuffer, getBlendshapeScores } from './detector.js';
 import { Renderer } from './renderer.js';
 import { loadGifs, matchGif } from './database.js';
-import { preloadGif, crossfadeIn, crossfadeOut } from './transition.js';
+import { crossfadeIn, crossfadeOut } from './transition.js';
 import './style.css';
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
 
-const video       = document.getElementById('webcam');
-const mainCanvas  = document.getElementById('main-canvas');
+const video         = document.getElementById('webcam');
+const mainCanvas    = document.getElementById('main-canvas');
 const overlayCanvas = document.getElementById('overlay-canvas');
-const gifOverlay  = document.getElementById('gif-overlay');   // native <img> for GIF
+const gifOverlay    = document.getElementById('gif-overlay');
 const debugExpression = document.getElementById('debug-expression');
 const debugMotion     = document.getElementById('debug-motion');
 const debugInfo       = document.getElementById('debug-hands');
 const debugTrigger    = document.getElementById('debug-trigger');
 const debugFps        = document.getElementById('debug-fps');
 const statusEl        = document.getElementById('status');
+const logEl           = document.getElementById('event-log');
+
+// ─── On-screen logger (so we can debug without the console) ───────────────────
+
+const logLines = [];
+function log(msg) {
+  const line = `${(performance.now() / 1000).toFixed(1)}s  ${msg}`;
+  logLines.unshift(line);
+  if (logLines.length > 8) logLines.pop();
+  if (logEl) logEl.textContent = logLines.join('\n');
+  console.log('[reaction]', msg);
+}
 
 // ─── App state ───────────────────────────────────────────────────────────────
 
-const STATE = Object.freeze({
-  LIVE: 'live',
-  HELD: 'held',
-  PLAYING: 'playing',
-  COOLDOWN: 'cooldown',
-});
+const STATE = Object.freeze({ LIVE: 'live', HELD: 'held', PLAYING: 'playing', COOLDOWN: 'cooldown' });
 
 const HOLD_MS     = 500;
 const PLAY_MS     = 3000;
 const COOLDOWN_MS = 3000;
+const FADE_MS     = 500;
 
 const renderer = new Renderer(mainCanvas);
 
+let gifDb = [];
 let appState = STATE.LIVE;
 let heldSince = 0;
 let heldExpr = '';
@@ -56,57 +65,67 @@ async function startWebcam() {
   renderer.resize(w, h);
   overlayCanvas.width  = w;
   overlayCanvas.height = h;
+  log(`webcam ${w}×${h}`);
 }
 
-// ─── Preload all GIF images at boot ──────────────────────────────────────────
-// Stores loaded HTMLImageElement on each db entry so playback is instant.
+// ─── Playback ──────────────────────────────────────────────────────────────────
+// Plays a GIF directly by URL — no dependency on preload succeeding.
 
-async function preloadAllGifs(gifs) {
-  await Promise.all(
-    gifs.map(async g => {
-      try {
-        g._img = await preloadGif(g.url);
-      } catch {
-        console.warn(`Could not preload ${g.url}`);
-      }
-    })
-  );
-}
-
-// ─── Trigger + playback ───────────────────────────────────────────────────────
-
-async function triggerPlayback(expr, motion) {
+async function playMatch(match, reason) {
   try {
-    const match = matchGif({ expression: expr, motion });
-    if (!match) { appState = STATE.LIVE; return; }
-    if (!match._img) { appState = STATE.LIVE; return; } // failed to preload
+    log(`PLAY ${match.id} (${reason})`);
+    debugTrigger.textContent = `${match.id} (${reason})`;
 
-    debugTrigger.textContent = `${expr} + ${motion} → ${match.id}`;
-
-    // Set the GIF src on the overlay img element BEFORE freezing
-    gifOverlay.src = match._img.src;
+    // Point the overlay img at the GIF and ensure it's loaded enough to show
+    gifOverlay.src = match.url;
+    if (!gifOverlay.complete || gifOverlay.naturalWidth === 0) {
+      await new Promise((res, rej) => {
+        gifOverlay.onload = res;
+        gifOverlay.onerror = () => rej(new Error(`load failed: ${match.url}`));
+      });
+    }
+    log(`  img ready ${gifOverlay.naturalWidth}×${gifOverlay.naturalHeight}`);
 
     const frozen = await renderer.freezeFrame();
-
-    // Crossfade: frozen canvas → GIF img element
     await crossfadeIn(frozen, gifOverlay, overlayCanvas);
+    log('  faded in, holding');
 
-    // GIF img is now fully visible and animating natively — just wait
-    await new Promise(res => setTimeout(res, Math.max(0, PLAY_MS - 500)));
-
-    // Fade out GIF img
+    await wait(Math.max(0, PLAY_MS - FADE_MS));
     await crossfadeOut(gifOverlay);
+    log('  done');
 
     appState = STATE.COOLDOWN;
     cooldownUntil = performance.now() + COOLDOWN_MS;
   } catch (err) {
-    console.error('GIF playback failed:', err);
-    debugTrigger.textContent = `ERR: ${err.message}`;
+    log(`  ERROR: ${err.message}`);
     gifOverlay.style.display = 'none';
     overlayCanvas.getContext('2d').clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     appState = STATE.LIVE;
   }
 }
+
+function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function triggerFromDetection(expr, motion) {
+  const match = matchGif({ expression: expr, motion });
+  if (!match) {
+    log(`no match for ${expr}+${motion}`);
+    appState = STATE.LIVE;
+    return;
+  }
+  await playMatch(match, `${expr}+${motion}`);
+}
+
+// ─── Manual keyboard trigger (bypasses detection) ─────────────────────────────
+// Press 1-9 to force-play the Nth GIF. Useful for testing playback in isolation.
+
+window.addEventListener('keydown', e => {
+  const n = parseInt(e.key, 10);
+  if (Number.isNaN(n) || n < 1 || n > gifDb.length) return;
+  if (appState === STATE.PLAYING) return;
+  appState = STATE.PLAYING;
+  playMatch(gifDb[n - 1], `key ${n}`);
+});
 
 // ─── Main loop ────────────────────────────────────────────────────────────────
 
@@ -120,42 +139,34 @@ function mainLoop(ts) {
     fpsTimer = ts;
   }
 
-  if (appState === STATE.COOLDOWN) {
-    renderer.drawFrame(video, null);
-    if (ts >= cooldownUntil) appState = STATE.LIVE;
-    requestAnimationFrame(mainLoop);
-    return;
-  }
-
-  if (appState === STATE.PLAYING) {
-    renderer.drawFrame(video, null);
-    requestAnimationFrame(mainLoop);
-    return;
-  }
-
-  // ── LIVE / HELD: detection ─────────────────────────────────────────────────
+  // Always run detection so the skeleton stays live even during playback
   const result        = detectFrame(video, ts);
   const faceLandmarks = result?.face?.faceLandmarks;
-  const faceBlendshapes = result?.face?.faceBlendshapes;
+  const faceBlend     = result?.face?.faceBlendshapes;
   const poseLandmarks = result?.pose?.landmarks;
 
-  let expression = 'neutral';
+  renderer.drawFrame(video, faceLandmarks, poseLandmarks);
+
+  // While a GIF is playing or cooling down, skip the trigger logic
+  if (appState === STATE.PLAYING) { requestAnimationFrame(mainLoop); return; }
+  if (appState === STATE.COOLDOWN) {
+    if (ts >= cooldownUntil) { appState = STATE.LIVE; log('cooldown end'); }
+    requestAnimationFrame(mainLoop);
+    return;
+  }
+
+  let expression = 'no-face';
   let motion = 'still';
 
   if (faceLandmarks?.length) {
     updateMotionBuffer(faceLandmarks);
-    expression = classifyExpression(faceBlendshapes);
+    expression = classifyExpression(faceBlend);
     motion = classifyMotion(faceLandmarks, poseLandmarks);
-    renderer.drawFrame(video, faceLandmarks);
-  } else {
-    renderer.drawFrame(video, null);
-    expression = 'no-face';
   }
 
   debugExpression.textContent = expression;
   debugMotion.textContent = motion;
-
-  const sc = getBlendshapeScores(faceBlendshapes);
+  const sc = getBlendshapeScores(faceBlend);
   debugInfo.textContent = `jaw:${sc.jawOpen ?? '—'} smile:${sc.mouthSmileLeft ?? '—'} brow:${sc.browOuterUpLeft ?? '—'} blink:${sc.eyeBlinkLeft ?? '—'} lookUp:${sc.eyeLookUpLeft ?? '—'} pose:${poseLandmarks?.length ? '✓' : '✗'}`;
 
   // ── Hold / trigger ─────────────────────────────────────────────────────────
@@ -176,7 +187,7 @@ function mainLoop(ts) {
     }
     if (ts - heldSince >= HOLD_MS) {
       appState = STATE.PLAYING;
-      triggerPlayback(heldExpr, heldMotion);
+      triggerFromDetection(heldExpr, heldMotion);
     }
   }
 
@@ -191,10 +202,10 @@ async function boot() {
 
   statusEl.textContent = 'Loading models…';
   await initDetector();
+  log('models loaded');
 
-  statusEl.textContent = 'Loading GIFs…';
-  const gifs = await loadGifs();
-  await preloadAllGifs(gifs);
+  gifDb = await loadGifs();
+  log(`${gifDb.length} gifs in db (press 1-${gifDb.length} to test playback)`);
 
   statusEl.textContent = '';
   document.getElementById('status-bar').style.display = 'none';
@@ -205,4 +216,5 @@ async function boot() {
 boot().catch(err => {
   console.error(err);
   statusEl.textContent = `Error: ${err.message}`;
+  log(`BOOT ERROR: ${err.message}`);
 });
