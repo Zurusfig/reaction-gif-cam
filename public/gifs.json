@@ -40,5 +40,11 @@
     "url": "/gifs/sukuna-sinister.gif",
     "tags": { "expression": "evil_smile", "motion": "praying" },
     "faceBox": { "x": 0.25, "y": 0.1, "w": 0.5, "h": 0.6 }
+  },
+  {
+    "id": "cinema",
+    "url": "/gifs/cinema.gif",
+    "tags": { "expression": null, "motion": "hands_up" },
+    "faceBox": { "x": 0.25, "y": 0.1, "w": 0.5, "h": 0.6 }
   }
 ]

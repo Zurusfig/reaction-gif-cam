@@ -32,6 +32,18 @@ const POSE_CONNECTIONS = [
 ];
 const POSE_VIS_THRESH = 0.5;
 
+// Hand connections (MediaPipe 21-pt model)
+const HAND_CONNECTIONS = [
+  [0, 1], [1, 2], [2, 3], [3, 4],        // thumb
+  [0, 5], [5, 6], [6, 7], [7, 8],        // index
+  [5, 9], [9, 10], [10, 11], [11, 12],   // middle
+  [9, 13], [13, 14], [14, 15], [15, 16], // ring
+  [13, 17], [17, 18], [18, 19], [19, 20],// pinky
+  [0, 17],                               // palm base
+];
+const HAND_COLOR = 'rgba(80, 200, 255, 0.9)';
+const HAND_JOINT_COLOR = 'rgba(255, 255, 255, 0.95)';
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -49,8 +61,8 @@ export class Renderer {
     this.offscreen.height = h;
   }
 
-  // Draw mirrored webcam + optional face landmarks + optional pose skeleton
-  drawFrame(videoEl, faceLandmarks, poseLandmarks) {
+  // Draw mirrored webcam + optional face landmarks + pose skeleton + hands
+  drawFrame(videoEl, faceLandmarks, poseLandmarks, handLandmarks) {
     const { ctx, canvas } = this;
     const w = canvas.width, h = canvas.height;
 
@@ -63,11 +75,39 @@ export class Renderer {
     if (this.showSkeleton && poseLandmarks?.length) {
       this._drawSkeleton(poseLandmarks[0], w, h);
     }
+    if (this.showSkeleton && handLandmarks?.length) {
+      for (const hand of handLandmarks) this._drawHand(hand, w, h);
+    }
     if (this.showLandmarks && faceLandmarks?.length) {
       this._drawFaceLandmarks(faceLandmarks[0], w, h);
     }
 
     this.offCtx.drawImage(this.canvas, 0, 0);
+  }
+
+  _drawHand(lm, w, h) {
+    const { ctx } = this;
+    const px = pt => (1 - pt.x) * w;  // mirror x
+    const py = pt => pt.y * h;
+
+    ctx.strokeStyle = HAND_COLOR;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    for (const [a, b] of HAND_CONNECTIONS) {
+      const pa = lm[a], pb = lm[b];
+      if (!pa || !pb) continue;
+      ctx.beginPath();
+      ctx.moveTo(px(pa), py(pa));
+      ctx.lineTo(px(pb), py(pb));
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = HAND_JOINT_COLOR;
+    for (const pt of lm) {
+      ctx.beginPath();
+      ctx.arc(px(pt), py(pt), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   _drawFaceLandmarks(lm, w, h) {
