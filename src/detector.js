@@ -1,4 +1,4 @@
-import { FaceLandmarker, PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
+import { FaceLandmarker, PoseLandmarker, HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
 // ─── Blendshape thresholds ───────────────────────────────────────────────────
 
@@ -22,17 +22,17 @@ const EYE_CLOSED_THRESH     = 0.5;   // both eyes must exceed this
 // ─── Face landmark indices ───────────────────────────────────────────────────
 
 const NOSE_TIP_IDX  = 4;
-const LEFT_EAR_IDX  = 234;
-const RIGHT_EAR_IDX = 454;
 const BROW_L_IDX    = 70;
 const CHIN_IDX      = 152;
 
 // ─── Pose landmark indices ───────────────────────────────────────────────────
 
-const POSE_LEFT_WRIST_IDX    = 15;
-const POSE_RIGHT_WRIST_IDX   = 16;
-const POSE_VISIBILITY_THRESH = 0.5;
-const PRAYING_DIST_THRESH    = 0.14;  // normalized wrist distance for clasped hands
+const POSE_LEFT_SHOULDER_IDX  = 11;
+const POSE_RIGHT_SHOULDER_IDX = 12;
+const POSE_LEFT_WRIST_IDX      = 15;
+const POSE_RIGHT_WRIST_IDX     = 16;
+const POSE_VISIBILITY_THRESH   = 0.5;
+const PRAYING_DIST_THRESH      = 0.14;  // normalized wrist distance for clasped hands
 
 // ─── Motion buffer ───────────────────────────────────────────────────────────
 
@@ -40,7 +40,6 @@ const MOTION_BUFFER_SIZE = 40;
 const NOD_Y_THRESH   = 0.022;   // raised — less hair-trigger nod
 const SHAKE_X_THRESH = 0.014;
 const AXIS_DOMINANCE = 1.6;     // winning axis must be 1.6× the other
-const TILT_THRESH    = 0.02;
 
 const noseBuf = [];
 
@@ -48,13 +47,14 @@ const noseBuf = [];
 
 let faceLandmarker = null;
 let poseLandmarker = null;
+let handLandmarker = null;
 
 export async function initDetector() {
   const vision = await FilesetResolver.forVisionTasks(
     'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm'
   );
 
-  [faceLandmarker, poseLandmarker] = await Promise.all([
+  [faceLandmarker, poseLandmarker, handLandmarker] = await Promise.all([
     FaceLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath:
@@ -76,14 +76,24 @@ export async function initDetector() {
       minPoseDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5,
     }),
+    HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath:
+          'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+        delegate: 'GPU',
+      },
+      runningMode: 'VIDEO',
+      numHands: 2,
+    }),
   ]);
 }
 
 export function detectFrame(videoEl, timestampMs) {
-  if (!faceLandmarker || !poseLandmarker) return null;
+  if (!faceLandmarker || !poseLandmarker || !handLandmarker) return null;
   return {
     face: faceLandmarker.detectForVideo(videoEl, timestampMs),
     pose: poseLandmarker.detectForVideo(videoEl, timestampMs),
+    hand: handLandmarker.detectForVideo(videoEl, timestampMs),
   };
 }
 
@@ -163,13 +173,11 @@ function oscillationAmplitude(values) {
 
 function classifyHeadMotion(landmarks) {
   if (noseBuf.length < 10 || !landmarks?.length) return 'still';
-  const lm = landmarks[0];
 
   const xs = noseBuf.map(p => p.x);
   const ys = noseBuf.map(p => p.y);
   const { amplitude: yAmp, reversals: yRev } = oscillationAmplitude(ys);
   const { amplitude: xAmp, reversals: xRev } = oscillationAmplitude(xs);
-  const earDiff = Math.abs(lm[LEFT_EAR_IDX].y - lm[RIGHT_EAR_IDX].y);
 
   // Require the active axis to dominate — prevents head shakes from registering as nods
   if (yAmp > NOD_Y_THRESH && yRev >= 1 && yAmp > xAmp * AXIS_DOMINANCE) return 'nod';
@@ -193,8 +201,11 @@ function classifyGesture(poseLandmarks, faceLandmarks) {
 
   const lw = pose[POSE_LEFT_WRIST_IDX];
   const rw = pose[POSE_RIGHT_WRIST_IDX];
+  const ls = pose[POSE_LEFT_SHOULDER_IDX];
+  const rs = pose[POSE_RIGHT_SHOULDER_IDX];
   const lVis = lw.visibility >= POSE_VISIBILITY_THRESH;
   const rVis = rw.visibility >= POSE_VISIBILITY_THRESH;
+  const shoulderY = (ls.y + rs.y) / 2;
 
   if ((lVis && lw.y < browY) || (rVis && rw.y < browY)) return 'hands_on_head';
 
@@ -206,6 +217,10 @@ function classifyGesture(poseLandmarks, faceLandmarks) {
       return 'praying';
     }
   }
+
+  // Hands up beside you (ABSOLUTE CINEMA): both wrists raised above shoulders
+  // but below the brow line (not on top of head), spread apart.
+  if (lVis && rVis && lw.y < shoulderY && rw.y < shoulderY) return 'hands_up';
 
   const lOnChin = lVis && lw.y > noseY && lw.y < chinY + 0.12;
   const rOnChin = rVis && rw.y > noseY && rw.y < chinY + 0.12;

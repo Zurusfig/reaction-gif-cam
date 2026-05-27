@@ -144,8 +144,9 @@ function mainLoop(ts) {
   const faceLandmarks = result?.face?.faceLandmarks;
   const faceBlend     = result?.face?.faceBlendshapes;
   const poseLandmarks = result?.pose?.landmarks;
+  const handLandmarks = result?.hand?.landmarks;
 
-  renderer.drawFrame(video, faceLandmarks, poseLandmarks);
+  renderer.drawFrame(video, faceLandmarks, poseLandmarks, handLandmarks);
 
   // While a GIF is playing or cooling down, skip the trigger logic
   if (appState === STATE.PLAYING) { requestAnimationFrame(mainLoop); return; }
@@ -170,7 +171,10 @@ function mainLoop(ts) {
   debugInfo.textContent = `jaw:${sc.jawOpen ?? '—'} smile:${sc.mouthSmileLeft ?? '—'} brow:${sc.browOuterUpLeft ?? '—'} blink:${sc.eyeBlinkLeft ?? '—'} lookUp:${sc.eyeLookUpLeft ?? '—'} pose:${poseLandmarks?.length ? '✓' : '✗'}`;
 
   // ── Hold / trigger ─────────────────────────────────────────────────────────
-  if (expression === 'no-face' || expression === 'neutral') {
+  // Idle only when nothing is happening: no face, OR neutral face AND no motion.
+  // A neutral face with motion/gesture (e.g. neutral nod, hands_up) must trigger.
+  const idle = expression === 'no-face' || (expression === 'neutral' && motion === 'still');
+  if (idle) {
     appState = STATE.LIVE;
     heldExpr = '';
     heldMotion = '';
