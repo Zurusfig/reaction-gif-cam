@@ -11,6 +11,7 @@ const mainCanvas = document.getElementById('main-canvas');
 const overlayCanvas = document.getElementById('overlay-canvas');
 const debugExpression = document.getElementById('debug-expression');
 const debugMotion = document.getElementById('debug-motion');
+const debugHands = document.getElementById('debug-hands');
 const debugTrigger = document.getElementById('debug-trigger');
 const debugFps = document.getElementById('debug-fps');
 const statusEl = document.getElementById('status');
@@ -128,14 +129,18 @@ function mainLoop(ts) {
 
   // ── LIVE / HELD: run detection ─────────────────────────────────────────────
   const result = detectFrame(video, ts);
+  const faceLandmarks = result?.face?.faceLandmarks;
+  const faceBlendshapes = result?.face?.faceBlendshapes;
+  const handLandmarks = result?.hand?.landmarks;
+
   let expression = 'neutral';
   let motion = 'still';
 
-  if (result?.faceLandmarks?.length) {
-    updateMotionBuffer(result.faceLandmarks);
-    expression = classifyExpression(result.faceBlendshapes);
-    motion = classifyMotion(result.faceLandmarks);
-    renderer.drawFrame(video, result.faceLandmarks);
+  if (faceLandmarks?.length) {
+    updateMotionBuffer(faceLandmarks);
+    expression = classifyExpression(faceBlendshapes);
+    motion = classifyMotion(faceLandmarks, handLandmarks);
+    renderer.drawFrame(video, faceLandmarks);
   } else {
     renderer.drawFrame(video, null);
     expression = 'no-face';
@@ -143,6 +148,9 @@ function mainLoop(ts) {
 
   debugExpression.textContent = expression;
   debugMotion.textContent = motion;
+  debugHands.textContent = handLandmarks?.length
+    ? `${handLandmarks.length} hand${handLandmarks.length > 1 ? 's' : ''}`
+    : 'none';
 
   // ── Hold / trigger logic ──────────────────────────────────────────────────
   if (expression === 'no-face' || expression === 'neutral') {
