@@ -1,7 +1,7 @@
 import { initDetector, detectFrame, classifyExpression, classifyMotion, updateMotionBuffer, getBlendshapeScores } from './detector.js';
 import { Renderer } from './renderer.js';
 import { loadGifs, matchGif } from './database.js';
-import { preloadGif, crossfadeIn, crossfadeOut } from './transition.js';
+import { preloadGif, crossfadeIn, holdGif, crossfadeOut } from './transition.js';
 import './style.css';
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
@@ -75,9 +75,9 @@ async function triggerPlayback(expr, motion) {
     const gifStartedAt = performance.now();
     await crossfadeIn(frozen, img, overlayCanvas);
 
+    // Keep redrawing the img every rAF so the browser advances GIF frames
     const elapsed = performance.now() - gifStartedAt;
-    const remaining = Math.max(0, PLAY_MS - elapsed);
-    await new Promise(res => setTimeout(res, remaining));
+    await holdGif(img, overlayCanvas, Math.max(0, PLAY_MS - elapsed));
 
     await crossfadeOut(img, overlayCanvas);
 

@@ -8,7 +8,7 @@ const BROW_RAISE_SHAPES = ['browOuterUpLeft', 'browOuterUpRight'];
 const EYE_LOOK_UP      = ['eyeLookUpLeft', 'eyeLookUpRight'];
 const EYE_WIDE         = ['eyeWideLeft', 'eyeWideRight'];
 
-const SMILE_THRESH          = 0.50;  // raised from 0.40 — reduces false neutral→smile
+const SMILE_THRESH          = 0.55;  // both left AND right must exceed this
 const SURPRISE_JAW_THRESH   = 0.35;
 const SURPRISE_BROW_THRESH  = 0.25;
 const FROWN_THRESH          = 0.35;
@@ -32,9 +32,10 @@ const POSE_VISIBILITY_THRESH = 0.5;
 
 // ─── Motion buffer ───────────────────────────────────────────────────────────
 
-const MOTION_BUFFER_SIZE = 40;   // widened from 30 for better shake detection
-const NOD_Y_THRESH   = 0.016;
-const SHAKE_X_THRESH = 0.012;   // lowered from 0.018 — easier to trigger shake
+const MOTION_BUFFER_SIZE = 40;
+const NOD_Y_THRESH   = 0.022;   // raised — less hair-trigger nod
+const SHAKE_X_THRESH = 0.014;
+const AXIS_DOMINANCE = 1.6;     // winning axis must be 1.6× the other
 const TILT_THRESH    = 0.02;
 
 const noseBuf = [];
@@ -98,14 +99,16 @@ export function classifyExpression(blendshapes) {
 
   const jawOpen    = shapes.find(s => s.categoryName === 'jawOpen')?.score ?? 0;
   const browInner  = shapes.find(s => s.categoryName === 'browInnerUp')?.score ?? 0;
-  const smileScore = avg(shapes, SMILE_SHAPES);
+  // Require both sides to smile — avoids smirk or asymmetric resting face triggering
+  const smileL = shapes.find(s => s.categoryName === 'mouthSmileLeft')?.score ?? 0;
+  const smileR = shapes.find(s => s.categoryName === 'mouthSmileRight')?.score ?? 0;
   const frownScore = avg(shapes, FROWN_SHAPES);
   const browRaise  = avg(shapes, BROW_RAISE_SHAPES);
   const lookUpScore = avg(shapes, EYE_LOOK_UP);
   const eyeWideScore = avg(shapes, EYE_WIDE);
 
   if (jawOpen > SURPRISE_JAW_THRESH && browInner > SURPRISE_BROW_THRESH) return 'surprise';
-  if (smileScore > SMILE_THRESH) return 'smile';
+  if (smileL > SMILE_THRESH && smileR > SMILE_THRESH) return 'smile';
   if (frownScore > FROWN_THRESH) return 'frown';
   if (lookUpScore > LOOKING_UP_THRESH) return 'looking_up';
   if (browRaise > BROW_RAISE_THRESH) return 'raised_brows';
@@ -158,8 +161,9 @@ function classifyHeadMotion(landmarks) {
   const { amplitude: xAmp, reversals: xRev } = oscillationAmplitude(xs);
   const earDiff = Math.abs(lm[LEFT_EAR_IDX].y - lm[RIGHT_EAR_IDX].y);
 
-  if (yAmp > NOD_Y_THRESH && yRev >= 1) return 'nod';
-  if (xAmp > SHAKE_X_THRESH && xRev >= 1) return 'shake';
+  // Require the active axis to dominate — prevents head shakes from registering as nods
+  if (yAmp > NOD_Y_THRESH && yRev >= 1 && yAmp > xAmp * AXIS_DOMINANCE) return 'nod';
+  if (xAmp > SHAKE_X_THRESH && xRev >= 1 && xAmp > yAmp * AXIS_DOMINANCE) return 'shake';
   if (earDiff > TILT_THRESH) return 'tilt';
   return 'still';
 }

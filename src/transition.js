@@ -34,14 +34,22 @@ export async function crossfadeIn(frozenFrame, gifImg, overlayCanvas) {
   });
 }
 
-// Draw current GIF frame to overlay (call every rAF tick while PLAYING).
-// Browser auto-advances GIF frames when an img is drawn repeatedly.
-export function drawGifFrame(gifImg, overlayCanvas, alpha = 1) {
+// Hold the GIF at full opacity for `durationMs`, redrawing every rAF tick
+// so the browser advances the GIF's animation frames.
+export function holdGif(gifImg, overlayCanvas, durationMs) {
   const ctx = overlayCanvas.getContext('2d');
-  ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-  ctx.globalAlpha = alpha;
-  ctx.drawImage(gifImg, 0, 0, overlayCanvas.width, overlayCanvas.height);
-  ctx.globalAlpha = 1;
+  const w = overlayCanvas.width, h = overlayCanvas.height;
+  const end = performance.now() + durationMs;
+
+  return new Promise(resolve => {
+    function tick() {
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(gifImg, 0, 0, w, h);
+      if (performance.now() < end) requestAnimationFrame(tick);
+      else resolve();
+    }
+    requestAnimationFrame(tick);
+  });
 }
 
 // Crossfade from GIF back to transparent (live webcam underneath shows through).
