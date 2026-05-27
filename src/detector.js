@@ -174,7 +174,8 @@ function classifyHeadMotion(landmarks) {
   // Require the active axis to dominate — prevents head shakes from registering as nods
   if (yAmp > NOD_Y_THRESH && yRev >= 1 && yAmp > xAmp * AXIS_DOMINANCE) return 'nod';
   if (xAmp > SHAKE_X_THRESH && xRev >= 1 && xAmp > yAmp * AXIS_DOMINANCE) return 'shake';
-  if (earDiff > TILT_THRESH) return 'tilt';
+  // Tilt removed — no GIF uses it and the low threshold caused constant flicker
+  // that reset the hold timer and blocked other triggers from firing.
   return 'still';
 }
 
