@@ -1,4 +1,4 @@
-import { initDetector, detectFrame, classifyExpression, classifyMotion, updateMotionBuffer, getBlendshapeScores } from './detector.js';
+import { initDetector, detectFrame, classifyExpression, classifyMotion, classifyHandGesture, updateMotionBuffer, getBlendshapeScores } from './detector.js';
 import { Renderer } from './renderer.js';
 import { loadGifs, matchGif } from './database.js';
 import { crossfadeIn, crossfadeOut } from './transition.js';
@@ -45,6 +45,7 @@ let appState = STATE.LIVE;
 let heldSince = 0;
 let heldExpr = '';
 let heldMotion = '';
+let heldGesture = '';
 let cooldownUntil = 0;
 
 let frameCount = 0;
@@ -106,14 +107,14 @@ async function playMatch(match, reason) {
 
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function triggerFromDetection(expr, motion) {
-  const match = matchGif({ expression: expr, motion });
+async function triggerFromDetection(expr, motion, gesture, jawOpen) {
+  const match = matchGif({ expression: expr, motion, gesture, jawOpen });
   if (!match) {
-    log(`no match for ${expr}+${motion}`);
+    log(`no match for ${expr}+${motion}+${gesture}`);
     appState = STATE.LIVE;
     return;
   }
-  await playMatch(match, `${expr}+${motion}`);
+  await playMatch(match, `${expr}+${motion}+${gesture}`);
 }
 
 // ─── Manual keyboard trigger (bypasses detection) ─────────────────────────────
@@ -158,40 +159,47 @@ function mainLoop(ts) {
 
   let expression = 'no-face';
   let motion = 'still';
+  let gesture = 'none';
+  let jawOpenScore = 0;
 
   if (faceLandmarks?.length) {
     updateMotionBuffer(faceLandmarks);
     expression = classifyExpression(faceBlend);
     motion = classifyMotion(faceLandmarks, poseLandmarks);
+    gesture = classifyHandGesture(handLandmarks, faceLandmarks);
   }
+
+  const sc = getBlendshapeScores(faceBlend);
+  jawOpenScore = parseFloat(sc.jawOpen ?? 0);
 
   debugExpression.textContent = expression;
   debugMotion.textContent = motion;
-  const sc = getBlendshapeScores(faceBlend);
-  debugInfo.textContent = `jaw:${sc.jawOpen ?? '—'} smile:${sc.mouthSmileLeft ?? '—'} brow:${sc.browOuterUpLeft ?? '—'} blink:${sc.eyeBlinkLeft ?? '—'} lookUp:${sc.eyeLookUpLeft ?? '—'} pose:${poseLandmarks?.length ? '✓' : '✗'}`;
+  debugInfo.textContent = `jaw:${sc.jawOpen ?? '—'} smile:${sc.mouthSmileLeft ?? '—'} brow:${sc.browOuterUpLeft ?? '—'} blink:${sc.eyeBlinkLeft ?? '—'} lookUp:${sc.eyeLookUpLeft ?? '—'} pose:${poseLandmarks?.length ? '✓' : '✗'} hand:${gesture}`;
 
   // ── Hold / trigger ─────────────────────────────────────────────────────────
-  // Idle only when nothing is happening: no face, OR neutral face AND no motion.
-  // A neutral face with motion/gesture (e.g. neutral nod, hands_up) must trigger.
-  const idle = expression === 'no-face' || (expression === 'neutral' && motion === 'still');
+  // Idle only when nothing is happening: no face, OR neutral face AND no motion AND no gesture.
+  const idle = expression === 'no-face' || (expression === 'neutral' && motion === 'still' && gesture === 'none');
   if (idle) {
     appState = STATE.LIVE;
     heldExpr = '';
     heldMotion = '';
+    heldGesture = '';
   } else if (appState === STATE.LIVE) {
     appState = STATE.HELD;
     heldSince = ts;
     heldExpr = expression;
     heldMotion = motion;
+    heldGesture = gesture;
   } else if (appState === STATE.HELD) {
-    if (expression !== heldExpr || motion !== heldMotion) {
+    if (expression !== heldExpr || motion !== heldMotion || gesture !== heldGesture) {
       heldSince = ts;
       heldExpr = expression;
       heldMotion = motion;
+      heldGesture = gesture;
     }
     if (ts - heldSince >= HOLD_MS) {
       appState = STATE.PLAYING;
-      triggerFromDetection(heldExpr, heldMotion);
+      triggerFromDetection(heldExpr, heldMotion, heldGesture, jawOpenScore);
     }
   }
 

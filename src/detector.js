@@ -29,14 +29,17 @@ const CHIN_IDX      = 152;
 
 const POSE_LEFT_SHOULDER_IDX  = 11;
 const POSE_RIGHT_SHOULDER_IDX = 12;
+const POSE_LEFT_ELBOW_IDX     = 13;
+const POSE_RIGHT_ELBOW_IDX    = 14;
 const POSE_LEFT_WRIST_IDX      = 15;
 const POSE_RIGHT_WRIST_IDX     = 16;
 const POSE_VISIBILITY_THRESH   = 0.5;
 const PRAYING_DIST_THRESH      = 0.14;  // normalized wrist distance for clasped hands
+const ELBOW_SHOULDER_Y_THRESH  = 0.12;  // elbow must be at roughly shoulder height for cinema
 
 // ─── Motion buffer ───────────────────────────────────────────────────────────
 
-const MOTION_BUFFER_SIZE = 40;
+const MOTION_BUFFER_SIZE = 50;
 const NOD_Y_THRESH   = 0.022;   // raised — less hair-trigger nod
 const SHAKE_X_THRESH = 0.014;
 const AXIS_DOMINANCE = 1.6;     // winning axis must be 1.6× the other
@@ -180,8 +183,8 @@ function classifyHeadMotion(landmarks) {
   const { amplitude: xAmp, reversals: xRev } = oscillationAmplitude(xs);
 
   // Require the active axis to dominate — prevents head shakes from registering as nods
-  if (yAmp > NOD_Y_THRESH && yRev >= 1 && yAmp > xAmp * AXIS_DOMINANCE) return 'nod';
-  if (xAmp > SHAKE_X_THRESH && xRev >= 1 && xAmp > yAmp * AXIS_DOMINANCE) return 'shake';
+  if (yAmp > NOD_Y_THRESH && yRev >= 2 && yAmp > xAmp * AXIS_DOMINANCE) return 'nod';
+  if (xAmp > SHAKE_X_THRESH && xRev >= 2 && xAmp > yAmp * AXIS_DOMINANCE) return 'shake';
   // Tilt removed — no GIF uses it and the low threshold caused constant flicker
   // that reset the hold timer and blocked other triggers from firing.
   return 'still';
@@ -201,11 +204,14 @@ function classifyGesture(poseLandmarks, faceLandmarks) {
 
   const lw = pose[POSE_LEFT_WRIST_IDX];
   const rw = pose[POSE_RIGHT_WRIST_IDX];
+  const le = pose[POSE_LEFT_ELBOW_IDX];
+  const re = pose[POSE_RIGHT_ELBOW_IDX];
   const ls = pose[POSE_LEFT_SHOULDER_IDX];
   const rs = pose[POSE_RIGHT_SHOULDER_IDX];
   const lVis = lw.visibility >= POSE_VISIBILITY_THRESH;
   const rVis = rw.visibility >= POSE_VISIBILITY_THRESH;
-  const shoulderY = (ls.y + rs.y) / 2;
+  const leVis = le?.visibility >= POSE_VISIBILITY_THRESH;
+  const reVis = re?.visibility >= POSE_VISIBILITY_THRESH;
 
   if ((lVis && lw.y < browY) || (rVis && rw.y < browY)) return 'hands_on_head';
 
@@ -218,14 +224,54 @@ function classifyGesture(poseLandmarks, faceLandmarks) {
     }
   }
 
-  // Hands up beside you (ABSOLUTE CINEMA): both wrists raised above shoulders
-  // but below the brow line (not on top of head), spread apart.
-  if (lVis && rVis && lw.y < shoulderY && rw.y < shoulderY) return 'hands_up';
+  // ABSOLUTE CINEMA: elbows at shoulder height (perpendicular), wrists raised above elbows
+  if (lVis && rVis && leVis && reVis) {
+    const lElbowAtShoulder = Math.abs(le.y - ls.y) < ELBOW_SHOULDER_Y_THRESH;
+    const rElbowAtShoulder = Math.abs(re.y - rs.y) < ELBOW_SHOULDER_Y_THRESH;
+    const lWristAboveElbow = lw.y < le.y;
+    const rWristAboveElbow = rw.y < re.y;
+    if (lElbowAtShoulder && rElbowAtShoulder && lWristAboveElbow && rWristAboveElbow) {
+      return 'hands_up';
+    }
+  }
 
   const lOnChin = lVis && lw.y > noseY && lw.y < chinY + 0.12;
   const rOnChin = rVis && rw.y > noseY && rw.y < chinY + 0.12;
   if (lOnChin || rOnChin) return 'hand_on_chin';
 
+  return 'none';
+}
+
+// ─── Hand gesture classifier (finger-level, using HandLandmarker) ─────────────
+
+// HandLandmarker landmark indices
+const HAND_INDEX_TIP   = 8;
+const HAND_WRIST       = 0;
+
+export function classifyHandGesture(handLandmarks, faceLandmarks) {
+  if (!handLandmarks?.length || !faceLandmarks?.length) return 'none';
+  const face = faceLandmarks[0];
+  const noseY = face[NOSE_TIP_IDX].y;
+  const chinY = face[CHIN_IDX].y;
+  // Face x bounds in normalized coords (un-mirrored): nose tip x ± half face width
+  const faceXCenter = face[NOSE_TIP_IDX].x;
+  const faceHalfW = 0.15;
+
+  for (const hand of handLandmarks) {
+    const tip  = hand[HAND_INDEX_TIP];
+    const wrist = hand[HAND_WRIST];
+    if (!tip || !wrist) continue;
+
+    // Index finger tip near lip zone: between nose bottom and chin, within face x span
+    const inFaceX = tip.x > faceXCenter - faceHalfW && tip.x < faceXCenter + faceHalfW;
+    const inLipY  = tip.y > noseY + 0.02 && tip.y < chinY - 0.02;
+    if (inFaceX && inLipY) return 'index_on_lip';
+
+    // Wrist near chin (hand stroking beard): wrist between nose and chin + a bit below
+    const wristOnChin = wrist.y > noseY && wrist.y < chinY + 0.10
+      && wrist.x > faceXCenter - faceHalfW - 0.1 && wrist.x < faceXCenter + faceHalfW + 0.1;
+    if (wristOnChin) return 'hand_on_chin';
+  }
   return 'none';
 }
 

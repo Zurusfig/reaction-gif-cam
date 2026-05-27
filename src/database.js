@@ -11,13 +11,16 @@ export async function loadGifs() {
 }
 
 // Returns a random matching GIF entry or null.
-// null expression tag = any expression accepted (gesture-driven GIFs)
-// null motion tag = any motion accepted
-export function matchGif({ expression, motion }) {
+// null tag field = any value accepted
+// gesture: optional hand gesture required
+// mouth_closed: if true, jawOpen must be below threshold
+export function matchGif({ expression, motion, gesture = 'none', jawOpen = 0 }) {
   const matches = gifDb.filter(g => {
-    const exprMatch = g.tags.expression === null || g.tags.expression === expression;
-    const motionMatch = g.tags.motion === null || g.tags.motion === motion;
-    return exprMatch && motionMatch;
+    const exprMatch   = g.tags.expression   === null || g.tags.expression   === undefined || g.tags.expression   === expression;
+    const motionMatch = g.tags.motion       === null || g.tags.motion       === undefined || g.tags.motion       === motion;
+    const gestureMatch = !g.tags.gesture    || g.tags.gesture === gesture;
+    const mouthOk     = !g.tags.mouth_closed || jawOpen < 0.20;
+    return exprMatch && motionMatch && gestureMatch && mouthOk;
   });
   if (!matches.length) return null;
   return matches[Math.floor(Math.random() * matches.length)];

@@ -14,7 +14,7 @@
   {
     "id": "monkey-thinking",
     "url": "/gifs/monkey-thinking.gif",
-    "tags": { "expression": "raised_brows", "motion": "hand_on_chin" },
+    "tags": { "expression": "raised_brows", "motion": "still", "gesture": "index_on_lip" },
     "faceBox": { "x": 0.25, "y": 0.1, "w": 0.5, "h": 0.65 }
   },
   {
@@ -26,7 +26,7 @@
   {
     "id": "speed-nod",
     "url": "/gifs/speed-nod.gif",
-    "tags": { "expression": null, "motion": "nod" },
+    "tags": { "expression": null, "motion": "nod", "gesture": "hand_on_chin", "mouth_closed": true },
     "faceBox": { "x": 0.25, "y": 0.1, "w": 0.5, "h": 0.6 }
   },
   {
