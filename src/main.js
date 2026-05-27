@@ -1,4 +1,4 @@
-import { initDetector, detectFrame, classifyExpression, classifyMotion, updateMotionBuffer } from './detector.js';
+import { initDetector, detectFrame, classifyExpression, classifyMotion, updateMotionBuffer, getTongueScore } from './detector.js';
 import { Renderer } from './renderer.js';
 import { loadGifs, matchGif } from './database.js';
 import { preloadGif, crossfadeIn, drawGifFrame, crossfadeOut } from './transition.js';
@@ -131,7 +131,7 @@ function mainLoop(ts) {
   const result = detectFrame(video, ts);
   const faceLandmarks = result?.face?.faceLandmarks;
   const faceBlendshapes = result?.face?.faceBlendshapes;
-  const handLandmarks = result?.hand?.landmarks;
+  const poseLandmarks = result?.pose?.landmarks;
 
   let expression = 'neutral';
   let motion = 'still';
@@ -139,7 +139,7 @@ function mainLoop(ts) {
   if (faceLandmarks?.length) {
     updateMotionBuffer(faceLandmarks);
     expression = classifyExpression(faceBlendshapes);
-    motion = classifyMotion(faceLandmarks, handLandmarks);
+    motion = classifyMotion(faceLandmarks, poseLandmarks);
     renderer.drawFrame(video, faceLandmarks);
   } else {
     renderer.drawFrame(video, null);
@@ -148,9 +148,8 @@ function mainLoop(ts) {
 
   debugExpression.textContent = expression;
   debugMotion.textContent = motion;
-  debugHands.textContent = handLandmarks?.length
-    ? `${handLandmarks.length} hand${handLandmarks.length > 1 ? 's' : ''}`
-    : 'none';
+  const tongueScore = getTongueScore(faceBlendshapes);
+  debugHands.textContent = `tongue: ${tongueScore.toFixed(2)}  pose: ${poseLandmarks?.length ? 'yes' : 'no'}`;
 
   // ── Hold / trigger logic ──────────────────────────────────────────────────
   if (expression === 'no-face' || expression === 'neutral') {

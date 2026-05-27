@@ -20,7 +20,7 @@
   {
     "id": "shocked-black",
     "url": "/gifs/shocked-black.gif",
-    "tags": { "expression": "surprise", "motion": null },
+    "tags": { "expression": "surprise", "motion": "still" },
     "faceBox": { "x": 0.2, "y": 0.05, "w": 0.6, "h": 0.65 }
   },
   {

@@ -1,4 +1,4 @@
-import { FaceLandmarker, HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
+import { FaceLandmarker, PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
 // ─── Blendshape thresholds ───────────────────────────────────────────────────
 
@@ -6,26 +6,27 @@ const SMILE_SHAPES = ['mouthSmileLeft', 'mouthSmileRight'];
 const FROWN_SHAPES = ['mouthFrownLeft', 'mouthFrownRight'];
 const BROW_RAISE_SHAPES = ['browOuterUpLeft', 'browOuterUpRight'];
 
-const TONGUE_OUT_THRESH   = 0.5;
-const SMILE_THRESH        = 0.4;
-const SURPRISE_JAW_THRESH = 0.35;
+const TONGUE_OUT_THRESH    = 0.4;
+const SMILE_THRESH         = 0.4;
+const SURPRISE_JAW_THRESH  = 0.35;
 const SURPRISE_BROW_THRESH = 0.25;
-const FROWN_THRESH        = 0.35;
-const BROW_RAISE_THRESH   = 0.35;
+const FROWN_THRESH         = 0.35;
+const BROW_RAISE_THRESH    = 0.35;
 
-// ─── Landmark indices ────────────────────────────────────────────────────────
+// ─── Face landmark indices ───────────────────────────────────────────────────
 
-const NOSE_TIP_IDX   = 4;
-const LEFT_EAR_IDX   = 234;
-const RIGHT_EAR_IDX  = 454;
-// Face zone reference points for gesture detection
-const EYEBROW_TOP_IDX = 10;   // forehead center / top of head
-const BROW_L_IDX      = 70;   // left brow inner corner
-const CHIN_IDX        = 152;  // chin bottom
-// Hand landmark indices
-const WRIST_IDX       = 0;
-const INDEX_TIP_IDX   = 8;
-const MIDDLE_TIP_IDX  = 12;
+const NOSE_TIP_IDX  = 4;
+const LEFT_EAR_IDX  = 234;
+const RIGHT_EAR_IDX = 454;
+const BROW_L_IDX    = 70;   // left brow — used as vertical threshold for "above brow"
+const CHIN_IDX      = 152;  // chin bottom
+
+// ─── Pose landmark indices (MediaPipe 33-point body model) ───────────────────
+
+const POSE_NOSE_IDX          = 0;
+const POSE_LEFT_WRIST_IDX    = 15;
+const POSE_RIGHT_WRIST_IDX   = 16;
+const POSE_VISIBILITY_THRESH = 0.5;
 
 // ─── Motion buffer ───────────────────────────────────────────────────────────
 
@@ -39,14 +40,14 @@ const noseBuf = [];
 // ─── Model instances ─────────────────────────────────────────────────────────
 
 let faceLandmarker = null;
-let handLandmarker = null;
+let poseLandmarker = null;
 
 export async function initDetector() {
   const vision = await FilesetResolver.forVisionTasks(
     'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm'
   );
 
-  [faceLandmarker, handLandmarker] = await Promise.all([
+  [faceLandmarker, poseLandmarker] = await Promise.all([
     FaceLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath:
@@ -57,24 +58,26 @@ export async function initDetector() {
       runningMode: 'VIDEO',
       numFaces: 1,
     }),
-    HandLandmarker.createFromOptions(vision, {
+    PoseLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath:
-          'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+          'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
         delegate: 'GPU',
       },
       runningMode: 'VIDEO',
-      numHands: 2,
+      numPoses: 1,
+      minPoseDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
     }),
   ]);
 }
 
-// Returns { face, hand } results for the frame
+// Returns { face, pose } results for the frame
 export function detectFrame(videoEl, timestampMs) {
-  if (!faceLandmarker || !handLandmarker) return null;
+  if (!faceLandmarker || !poseLandmarker) return null;
   return {
     face: faceLandmarker.detectForVideo(videoEl, timestampMs),
-    hand: handLandmarker.detectForVideo(videoEl, timestampMs),
+    pose: poseLandmarker.detectForVideo(videoEl, timestampMs),
   };
 }
 
@@ -92,20 +95,25 @@ export function classifyExpression(blendshapes) {
   if (!blendshapes?.length) return 'neutral';
   const shapes = blendshapes[0].categories;
 
-  const tongueOut = shapes.find(s => s.categoryName === 'tongueOut')?.score ?? 0;
-  const jawOpen   = shapes.find(s => s.categoryName === 'jawOpen')?.score ?? 0;
-  const browInner = shapes.find(s => s.categoryName === 'browInnerUp')?.score ?? 0;
+  const tongueOut  = shapes.find(s => s.categoryName === 'tongueOut')?.score ?? 0;
+  const jawOpen    = shapes.find(s => s.categoryName === 'jawOpen')?.score ?? 0;
+  const browInner  = shapes.find(s => s.categoryName === 'browInnerUp')?.score ?? 0;
   const smileScore = avg(shapes, SMILE_SHAPES);
   const frownScore = avg(shapes, FROWN_SHAPES);
   const browRaise  = avg(shapes, BROW_RAISE_SHAPES);
 
-  // Priority: most distinctive first
   if (tongueOut > TONGUE_OUT_THRESH) return 'tongue_out';
   if (jawOpen > SURPRISE_JAW_THRESH && browInner > SURPRISE_BROW_THRESH) return 'surprise';
   if (smileScore > SMILE_THRESH) return 'smile';
   if (frownScore > FROWN_THRESH) return 'frown';
   if (browRaise > BROW_RAISE_THRESH) return 'raised_brows';
   return 'neutral';
+}
+
+// Raw tongue score — exposed for debug display
+export function getTongueScore(blendshapes) {
+  if (!blendshapes?.length) return 0;
+  return blendshapes[0].categories.find(s => s.categoryName === 'tongueOut')?.score ?? 0;
 }
 
 // ─── Head motion classifier ──────────────────────────────────────────────────
@@ -148,46 +156,46 @@ function classifyHeadMotion(landmarks) {
   return 'still';
 }
 
-// ─── Hand gesture classifier ─────────────────────────────────────────────────
+// ─── Pose-based gesture classifier ───────────────────────────────────────────
+// Uses body wrist positions relative to face landmarks for reliable arm tracking.
 
-function classifyGesture(handLandmarks, faceLandmarks) {
-  if (!handLandmarks?.length || !faceLandmarks?.length) return 'none';
+function classifyGesture(poseLandmarks, faceLandmarks) {
+  if (!poseLandmarks?.length || !faceLandmarks?.length) return 'none';
 
+  const pose = poseLandmarks[0];
   const face = faceLandmarks[0];
-  // Reference Y positions from face (normalized 0=top, 1=bottom)
-  const browY = face[BROW_L_IDX].y;
-  const noseY = face[NOSE_TIP_IDX].y;
-  const chinY = face[CHIN_IDX].y;
-  const faceLeft  = Math.min(face[LEFT_EAR_IDX].x, face[RIGHT_EAR_IDX].x);
-  const faceRight = Math.max(face[LEFT_EAR_IDX].x, face[RIGHT_EAR_IDX].x);
 
-  // Hands above brows = on head (mirror-flip x for display, don't flip for detection)
-  const handsAboveBrow = handLandmarks.filter(h => h[WRIST_IDX].y < browY);
-  if (handsAboveBrow.length >= 1) return 'hands_on_head';
+  const browY = face[BROW_L_IDX].y;     // upper boundary: above = on head
+  const noseY = face[NOSE_TIP_IDX].y;   // lower boundary for chin zone start
+  const chinY = face[CHIN_IDX].y;       // lower boundary for chin zone end
 
-  // Fingertips in the lower-face zone (between nose and just below chin) = hand_on_chin
-  for (const hand of handLandmarks) {
-    const tip = hand[INDEX_TIP_IDX];
-    const mid = hand[MIDDLE_TIP_IDX];
-    const inFaceX = (tip.x > faceLeft - 0.1 && tip.x < faceRight + 0.1);
-    const inChinY = (tip.y > noseY && tip.y < chinY + 0.15);
-    if (inFaceX && inChinY) return 'hand_on_chin';
-    const inFaceX2 = (mid.x > faceLeft - 0.1 && mid.x < faceRight + 0.1);
-    const inChinY2 = (mid.y > noseY && mid.y < chinY + 0.15);
-    if (inFaceX2 && inChinY2) return 'hand_on_chin';
-  }
+  const lw = pose[POSE_LEFT_WRIST_IDX];
+  const rw = pose[POSE_RIGHT_WRIST_IDX];
+
+  const lVisible = lw.visibility >= POSE_VISIBILITY_THRESH;
+  const rVisible = rw.visibility >= POSE_VISIBILITY_THRESH;
+
+  // Wrist above brow line → hands on head
+  const leftOnHead  = lVisible && lw.y < browY;
+  const rightOnHead = rVisible && rw.y < browY;
+  if (leftOnHead || rightOnHead) return 'hands_on_head';
+
+  // Wrist between nose and chin → hand on chin/face
+  const leftOnChin  = lVisible && lw.y > noseY && lw.y < chinY + 0.12;
+  const rightOnChin = rVisible && rw.y > noseY && rw.y < chinY + 0.12;
+  if (leftOnChin || rightOnChin) return 'hand_on_chin';
 
   return 'none';
 }
 
 // ─── Combined motion output ──────────────────────────────────────────────────
-// Head motion takes priority (more intentional); gestures fill in when head is still.
+// Head motion wins when active; pose gestures fill in when head is still.
 
-export function classifyMotion(faceLandmarks, handLandmarks) {
+export function classifyMotion(faceLandmarks, poseLandmarks) {
   const headMotion = classifyHeadMotion(faceLandmarks);
   if (headMotion !== 'still') return headMotion;
 
-  const gesture = classifyGesture(handLandmarks, faceLandmarks);
+  const gesture = classifyGesture(poseLandmarks, faceLandmarks);
   return gesture !== 'none' ? gesture : 'still';
 }
 
