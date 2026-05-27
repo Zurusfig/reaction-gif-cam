@@ -32,13 +32,13 @@
   {
     "id": "speed-smile-eyeclosed",
     "url": "/gifs/speed-smile-eyeclosed.gif",
-    "tags": { "expression": "smile", "motion": "still" },
+    "tags": { "expression": "eye_closed", "motion": "still" },
     "faceBox": { "x": 0.25, "y": 0.1, "w": 0.5, "h": 0.6 }
   },
   {
     "id": "sukuna-sinister",
     "url": "/gifs/sukuna-sinister.gif",
-    "tags": { "expression": "frown", "motion": "still" },
+    "tags": { "expression": "evil_smile", "motion": "praying" },
     "faceBox": { "x": 0.25, "y": 0.1, "w": 0.5, "h": 0.6 }
   }
 ]

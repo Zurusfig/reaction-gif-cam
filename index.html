@@ -17,8 +17,10 @@
         <video id="webcam" playsinline muted></video>
         <!-- Main canvas: mirrored webcam + landmark overlay -->
         <canvas id="main-canvas"></canvas>
-        <!-- Overlay canvas: GIF transition layer -->
+        <!-- Overlay canvas: frozen-frame during crossfade -->
         <canvas id="overlay-canvas"></canvas>
+        <!-- GIF display: native img so animated GIFs play without rAF redraw -->
+        <img id="gif-overlay" alt="" />
       </div>
 
       <div id="debug-panel">

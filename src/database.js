@@ -7,7 +7,7 @@ let gifDb = [];
 export async function loadGifs() {
   const res = await fetch('/gifs.json');
   gifDb = await res.json();
-  return gifDb;
+  return gifDb;  // caller (main.js) preloads images and stores them as _img on each entry
 }
 
 // Returns a random matching GIF entry or null.

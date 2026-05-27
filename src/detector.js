@@ -8,13 +8,16 @@ const BROW_RAISE_SHAPES = ['browOuterUpLeft', 'browOuterUpRight'];
 const EYE_LOOK_UP      = ['eyeLookUpLeft', 'eyeLookUpRight'];
 const EYE_WIDE         = ['eyeWideLeft', 'eyeWideRight'];
 
-const SMILE_THRESH          = 0.55;  // both left AND right must exceed this
+const SMILE_THRESH          = 0.42;  // each side — accepts small smiles
+const EVIL_SMILE_THRESH     = 0.58;  // both sides — big deliberate smile
 const SURPRISE_JAW_THRESH   = 0.35;
 const SURPRISE_BROW_THRESH  = 0.25;
 const FROWN_THRESH          = 0.35;
 const BROW_RAISE_THRESH     = 0.35;
 const LOOKING_UP_THRESH     = 0.45;
+const EVIL_LOOK_UP_THRESH   = 0.35;  // looking up required for evil_smile
 const EYE_WIDE_THRESH       = 0.5;
+const EYE_CLOSED_THRESH     = 0.5;   // both eyes must exceed this
 
 // ─── Face landmark indices ───────────────────────────────────────────────────
 
@@ -29,6 +32,7 @@ const CHIN_IDX      = 152;
 const POSE_LEFT_WRIST_IDX    = 15;
 const POSE_RIGHT_WRIST_IDX   = 16;
 const POSE_VISIBILITY_THRESH = 0.5;
+const PRAYING_DIST_THRESH    = 0.14;  // normalized wrist distance for clasped hands
 
 // ─── Motion buffer ───────────────────────────────────────────────────────────
 
@@ -97,17 +101,22 @@ export function classifyExpression(blendshapes) {
   if (!blendshapes?.length) return 'neutral';
   const shapes = blendshapes[0].categories;
 
-  const jawOpen    = shapes.find(s => s.categoryName === 'jawOpen')?.score ?? 0;
-  const browInner  = shapes.find(s => s.categoryName === 'browInnerUp')?.score ?? 0;
-  // Require both sides to smile — avoids smirk or asymmetric resting face triggering
-  const smileL = shapes.find(s => s.categoryName === 'mouthSmileLeft')?.score ?? 0;
-  const smileR = shapes.find(s => s.categoryName === 'mouthSmileRight')?.score ?? 0;
-  const frownScore = avg(shapes, FROWN_SHAPES);
-  const browRaise  = avg(shapes, BROW_RAISE_SHAPES);
+  const jawOpen     = shapes.find(s => s.categoryName === 'jawOpen')?.score ?? 0;
+  const browInner   = shapes.find(s => s.categoryName === 'browInnerUp')?.score ?? 0;
+  const blinkL      = shapes.find(s => s.categoryName === 'eyeBlinkLeft')?.score ?? 0;
+  const blinkR      = shapes.find(s => s.categoryName === 'eyeBlinkRight')?.score ?? 0;
+  const smileL      = shapes.find(s => s.categoryName === 'mouthSmileLeft')?.score ?? 0;
+  const smileR      = shapes.find(s => s.categoryName === 'mouthSmileRight')?.score ?? 0;
+  const frownScore  = avg(shapes, FROWN_SHAPES);
+  const browRaise   = avg(shapes, BROW_RAISE_SHAPES);
   const lookUpScore = avg(shapes, EYE_LOOK_UP);
   const eyeWideScore = avg(shapes, EYE_WIDE);
 
+  // Priority: most distinctive / intentional first
+  if (blinkL > EYE_CLOSED_THRESH && blinkR > EYE_CLOSED_THRESH) return 'eye_closed';
   if (jawOpen > SURPRISE_JAW_THRESH && browInner > SURPRISE_BROW_THRESH) return 'surprise';
+  // Evil smile: big deliberate grin while eyes roll up
+  if (smileL > EVIL_SMILE_THRESH && smileR > EVIL_SMILE_THRESH && lookUpScore > EVIL_LOOK_UP_THRESH) return 'evil_smile';
   if (smileL > SMILE_THRESH && smileR > SMILE_THRESH) return 'smile';
   if (frownScore > FROWN_THRESH) return 'frown';
   if (lookUpScore > LOOKING_UP_THRESH) return 'looking_up';
@@ -121,6 +130,7 @@ export function getBlendshapeScores(blendshapes) {
   if (!blendshapes?.length) return {};
   const shapes = blendshapes[0].categories;
   const pick = ['jawOpen', 'browInnerUp', 'mouthSmileLeft', 'mouthSmileRight',
+                 'eyeBlinkLeft', 'eyeBlinkRight',
                  'eyeLookUpLeft', 'eyeLookUpRight', 'browOuterUpLeft', 'browOuterUpRight'];
   const out = {};
   for (const s of shapes) if (pick.includes(s.categoryName)) out[s.categoryName] = s.score.toFixed(2);
@@ -186,6 +196,15 @@ function classifyGesture(poseLandmarks, faceLandmarks) {
   const rVis = rw.visibility >= POSE_VISIBILITY_THRESH;
 
   if ((lVis && lw.y < browY) || (rVis && rw.y < browY)) return 'hands_on_head';
+
+  // Praying: both wrists visible, close together, at body/face level
+  if (lVis && rVis) {
+    const dist = Math.hypot(lw.x - rw.x, lw.y - rw.y);
+    const avgWristY = (lw.y + rw.y) / 2;
+    if (dist < PRAYING_DIST_THRESH && avgWristY > browY && avgWristY < chinY + 0.4) {
+      return 'praying';
+    }
+  }
 
   const lOnChin = lVis && lw.y > noseY && lw.y < chinY + 0.12;
   const rOnChin = rVis && rw.y > noseY && rw.y < chinY + 0.12;

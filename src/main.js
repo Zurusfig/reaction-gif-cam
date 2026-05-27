@@ -1,20 +1,21 @@
 import { initDetector, detectFrame, classifyExpression, classifyMotion, updateMotionBuffer, getBlendshapeScores } from './detector.js';
 import { Renderer } from './renderer.js';
 import { loadGifs, matchGif } from './database.js';
-import { preloadGif, crossfadeIn, holdGif, crossfadeOut } from './transition.js';
+import { preloadGif, crossfadeIn, crossfadeOut } from './transition.js';
 import './style.css';
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
 
-const video = document.getElementById('webcam');
-const mainCanvas = document.getElementById('main-canvas');
+const video       = document.getElementById('webcam');
+const mainCanvas  = document.getElementById('main-canvas');
 const overlayCanvas = document.getElementById('overlay-canvas');
+const gifOverlay  = document.getElementById('gif-overlay');   // native <img> for GIF
 const debugExpression = document.getElementById('debug-expression');
-const debugMotion = document.getElementById('debug-motion');
-const debugInfo = document.getElementById('debug-hands');
-const debugTrigger = document.getElementById('debug-trigger');
-const debugFps = document.getElementById('debug-fps');
-const statusEl = document.getElementById('status');
+const debugMotion     = document.getElementById('debug-motion');
+const debugInfo       = document.getElementById('debug-hands');
+const debugTrigger    = document.getElementById('debug-trigger');
+const debugFps        = document.getElementById('debug-fps');
+const statusEl        = document.getElementById('status');
 
 // ─── App state ───────────────────────────────────────────────────────────────
 
@@ -53,8 +54,23 @@ async function startWebcam() {
 
   const { videoWidth: w, videoHeight: h } = video;
   renderer.resize(w, h);
-  overlayCanvas.width = w;
+  overlayCanvas.width  = w;
   overlayCanvas.height = h;
+}
+
+// ─── Preload all GIF images at boot ──────────────────────────────────────────
+// Stores loaded HTMLImageElement on each db entry so playback is instant.
+
+async function preloadAllGifs(gifs) {
+  await Promise.all(
+    gifs.map(async g => {
+      try {
+        g._img = await preloadGif(g.url);
+      } catch {
+        console.warn(`Could not preload ${g.url}`);
+      }
+    })
+  );
 }
 
 // ─── Trigger + playback ───────────────────────────────────────────────────────
@@ -62,31 +78,32 @@ async function startWebcam() {
 async function triggerPlayback(expr, motion) {
   try {
     const match = matchGif({ expression: expr, motion });
-    if (!match) {
-      appState = STATE.LIVE;
-      return;
-    }
+    if (!match) { appState = STATE.LIVE; return; }
+    if (!match._img) { appState = STATE.LIVE; return; } // failed to preload
 
     debugTrigger.textContent = `${expr} + ${motion} → ${match.id}`;
 
-    const img = await preloadGif(match.url);
+    // Set the GIF src on the overlay img element BEFORE freezing
+    gifOverlay.src = match._img.src;
+
     const frozen = await renderer.freezeFrame();
 
-    const gifStartedAt = performance.now();
-    await crossfadeIn(frozen, img, overlayCanvas);
+    // Crossfade: frozen canvas → GIF img element
+    await crossfadeIn(frozen, gifOverlay, overlayCanvas);
 
-    // Keep redrawing the img every rAF so the browser advances GIF frames
-    const elapsed = performance.now() - gifStartedAt;
-    await holdGif(img, overlayCanvas, Math.max(0, PLAY_MS - elapsed));
+    // GIF img is now fully visible and animating natively — just wait
+    await new Promise(res => setTimeout(res, Math.max(0, PLAY_MS - 500)));
 
-    await crossfadeOut(img, overlayCanvas);
+    // Fade out GIF img
+    await crossfadeOut(gifOverlay);
 
     appState = STATE.COOLDOWN;
     cooldownUntil = performance.now() + COOLDOWN_MS;
   } catch (err) {
     console.error('GIF playback failed:', err);
-    debugTrigger.textContent = `Error: ${err.message}`;
-    // Always reset so the app doesn't get stuck in PLAYING
+    debugTrigger.textContent = `ERR: ${err.message}`;
+    gifOverlay.style.display = 'none';
+    overlayCanvas.getContext('2d').clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     appState = STATE.LIVE;
   }
 }
@@ -116,8 +133,8 @@ function mainLoop(ts) {
     return;
   }
 
-  // ── LIVE / HELD: run detection ─────────────────────────────────────────────
-  const result = detectFrame(video, ts);
+  // ── LIVE / HELD: detection ─────────────────────────────────────────────────
+  const result        = detectFrame(video, ts);
   const faceLandmarks = result?.face?.faceLandmarks;
   const faceBlendshapes = result?.face?.faceBlendshapes;
   const poseLandmarks = result?.pose?.landmarks;
@@ -138,11 +155,10 @@ function mainLoop(ts) {
   debugExpression.textContent = expression;
   debugMotion.textContent = motion;
 
-  // Show key raw scores in debug for tuning
-  const scores = getBlendshapeScores(faceBlendshapes);
-  debugInfo.textContent = `jaw:${scores.jawOpen ?? '—'}  smile:${scores.mouthSmileLeft ?? '—'}  brow:${scores.browOuterUpLeft ?? '—'}  lookUp:${scores.eyeLookUpLeft ?? '—'}  pose:${poseLandmarks?.length ? '✓' : '✗'}`;
+  const sc = getBlendshapeScores(faceBlendshapes);
+  debugInfo.textContent = `jaw:${sc.jawOpen ?? '—'} smile:${sc.mouthSmileLeft ?? '—'} brow:${sc.browOuterUpLeft ?? '—'} blink:${sc.eyeBlinkLeft ?? '—'} lookUp:${sc.eyeLookUpLeft ?? '—'} pose:${poseLandmarks?.length ? '✓' : '✗'}`;
 
-  // ── Hold / trigger logic ──────────────────────────────────────────────────
+  // ── Hold / trigger ─────────────────────────────────────────────────────────
   if (expression === 'no-face' || expression === 'neutral') {
     appState = STATE.LIVE;
     heldExpr = '';
@@ -175,7 +191,10 @@ async function boot() {
 
   statusEl.textContent = 'Loading models…';
   await initDetector();
-  await loadGifs();
+
+  statusEl.textContent = 'Loading GIFs…';
+  const gifs = await loadGifs();
+  await preloadAllGifs(gifs);
 
   statusEl.textContent = '';
   document.getElementById('status-bar').style.display = 'none';
