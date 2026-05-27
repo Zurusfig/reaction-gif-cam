@@ -40,10 +40,10 @@ const ELBOW_SHOULDER_Y_THRESH  = 0.12;  // elbow must be at roughly shoulder hei
 
 // ─── Motion buffer ───────────────────────────────────────────────────────────
 
-const MOTION_BUFFER_SIZE = 50;
-const NOD_Y_THRESH   = 0.022;   // raised — less hair-trigger nod
-const SHAKE_X_THRESH = 0.014;
-const AXIS_DOMINANCE = 1.6;     // winning axis must be 1.6× the other
+const MOTION_BUFFER_SIZE = 60;
+const NOD_Y_THRESH   = 0.030;   // larger amplitude required — deliberate nod only
+const SHAKE_X_THRESH = 0.016;
+const AXIS_DOMINANCE = 1.8;     // winning axis must be 1.8× the other
 
 const noseBuf = [];
 
@@ -183,8 +183,8 @@ function classifyHeadMotion(landmarks) {
   const { amplitude: xAmp, reversals: xRev } = oscillationAmplitude(xs);
 
   // Require the active axis to dominate — prevents head shakes from registering as nods
-  if (yAmp > NOD_Y_THRESH && yRev >= 2 && yAmp > xAmp * AXIS_DOMINANCE) return 'nod';
-  if (xAmp > SHAKE_X_THRESH && xRev >= 2 && xAmp > yAmp * AXIS_DOMINANCE) return 'shake';
+  if (yAmp > NOD_Y_THRESH && yRev >= 3 && yAmp > xAmp * AXIS_DOMINANCE) return 'nod';
+  if (xAmp > SHAKE_X_THRESH && xRev >= 3 && xAmp > yAmp * AXIS_DOMINANCE) return 'shake';
   // Tilt removed — no GIF uses it and the low threshold caused constant flicker
   // that reset the hold timer and blocked other triggers from firing.
   return 'still';
